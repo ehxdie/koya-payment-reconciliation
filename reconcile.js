@@ -5,17 +5,35 @@
 
 const fs = require("fs");
 
-let total = 0;
-let count = 0;
+// Amounts arrive as numbers or as strings with thousands separators ("4,804.15"). Work in kobo to avoid float drift.
+function toKobo(amount) {
+  return Math.round(Number(String(amount).replace(/,/g, "")) * 100);
+}
 
-const lines = fs.readFileSync("payments.jsonl", "utf8").split("\n").filter((l) => l.length > 0);
-for (const line of lines) {
-  const event = JSON.parse(line);
+// Only the latest attempt for each txn_id counts. Events are not in time order.
+const latest = new Map();
+for (const line of fs.readFileSync("payments.jsonl", "utf8").split("\n")) {
+  let event;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    continue; // blank or truncated line
+  }
+  if (!event || !event.txn_id) continue;
+  const ts = Date.parse(event.ts);
+  const prev = latest.get(event.txn_id);
+  if (!prev || ts > prev.ts) latest.set(event.txn_id, { ts, event });
+}
+
+let totalKobo = 0;
+let count = 0;
+for (const { event } of latest.values()) {
   if (event.status === "success") {
-    total += Number(event.amount);
+    totalKobo += toKobo(event.amount);
     count += 1;
   }
 }
+const total = totalKobo / 100;
 
 const expected = parseInt(fs.readFileSync("expected.txt", "utf8").trim(), 10);
 
